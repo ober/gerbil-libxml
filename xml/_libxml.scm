@@ -147,7 +147,7 @@ END-C
 
 (define xmlNode-name
   (c-lambda (xmlNodePtr)
-       char-string
+       UTF-8-string
        "___return ((char*)((xmlNodePtr)___arg1)->name);"))
 
 (define xmlNode-children
@@ -177,7 +177,7 @@ END-C
 
 (define xmlAttr-name
   (c-lambda (xmlAttrPtr)
-       char-string
+       UTF-8-string
        "___return ((char*)((xmlAttrPtr)___arg1)->name);"))
 
 (define xmlAttr-children
@@ -197,12 +197,12 @@ END-C
 
 (define xmlNs-href
   (c-lambda (xmlNsPtr)
-       char-string
+       UTF-8-string
        "___return ((char*)((xmlNsPtr)___arg1)->href);"))
 
 (define xmlNs-prefix
   (c-lambda (xmlNsPtr)
-       char-string
+       UTF-8-string
        "___return ((char*)((xmlNsPtr)___arg1)->prefix);"))
 
 ;; html/xml parser interfaces:
@@ -249,11 +249,17 @@ END-C
         int                             ; end
         char-string                     ; url
         char-string                     ; encoding
-        int)                            ; optionx
+        int)                            ; options
        xmlDocPtr
        #<<END-C
-___return (xmlReadMemory ((char*) U8_DATA (___arg1) + ___arg2,
-                           ___arg3 - ___arg2,
+int start = ___arg2;
+int end = ___arg3;
+int len = U8_LEN (___arg1);
+if (start < 0) start = 0;
+if (end > len) end = len;
+if (start > end) start = end;
+___return (xmlReadMemory ((char*) U8_DATA (___arg1) + start,
+                           end - start,
                            ___arg4, ___arg5, ___arg6));
 END-C
 ))
@@ -264,11 +270,17 @@ END-C
         int                             ; end
         char-string                     ; url
         char-string                     ; encoding
-        int)                            ; optionx
+        int)                            ; options
        xmlDocPtr
        #<<END-C
-___return (htmlReadMemory ((char*) U8_DATA (___arg1) + ___arg2,
-                            ___arg3 - ___arg2,
+int start = ___arg2;
+int end = ___arg3;
+int len = U8_LEN (___arg1);
+if (start < 0) start = 0;
+if (end > len) end = len;
+if (start > end) start = end;
+___return (htmlReadMemory ((char*) U8_DATA (___arg1) + start,
+                            end - start,
                             ___arg4, ___arg5, ___arg6));
 END-C
 ))
@@ -360,12 +372,12 @@ END-C
     (macro-port-mutex-lock! port)
     (if (##fx< (macro-character-port-rlo port)
                (macro-character-port-rhi port))
-      (let ((buf (substring->bytes (macro-character-port-rbuf port)
-                                   (macro-character-port-rlo port)
-                                   (macro-character-port-rhi port))))
-        (macro-character-port-rlo-set! port (macro-character-port-rhi port))
+      (let* ((rbuf (macro-character-port-rbuf port))
+             (rlo (macro-character-port-rlo port))
+             (rhi (macro-character-port-rhi port)))
+        (macro-character-port-rlo-set! port rhi)
         (macro-port-mutex-unlock! port)
-        buf)
+        (substring->bytes rbuf rlo rhi))
       (begin
         (macro-port-mutex-unlock! port)
          #f)))

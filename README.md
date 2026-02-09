@@ -72,7 +72,7 @@ to:
 Examples
 ``` scheme
 > (import :std/net/request)
-> (import :std/xml)
+> (import :clan/xml/libxml)
 > (parse-xml (request-text (http-get "https://www.w3schools.com/xml/note.xml")))
 (*TOP* (note (to "Tove") (from "Jani") (heading "Reminder") (body "Don't forget me this weekend!")))
 ```
@@ -80,7 +80,7 @@ Examples
 
 ### parse-html
 ``` scheme
-(parse-html source [url: "none.xml"] [encoding: (encoding "UTF-8")] [options: (options parse-xml-default-options)] [filter: (filter-els [])]) -> sxml | error
+(parse-html source [url: "none.html"] [encoding: (encoding "UTF-8")] [options: (options parse-html-default-options)] [filter: (filter-els [])]) -> sxml | error
 
   source   := string | u8vector | port
   url      := string for base URL

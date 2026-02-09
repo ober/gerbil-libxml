@@ -40,6 +40,18 @@
 (def (raise-libxml-error where what . irritants)
   (raise (LibXMLError what where: where irritants: irritants)))
 
+(def (source-description source)
+  (cond
+   ((string? source)
+    (if (> (string-length source) 200)
+      (string-append (substring source 0 200) "...")
+      source))
+   ((u8vector? source)
+    (string-append "<u8vector length=" (number->string (u8vector-length source)) ">"))
+   ((input-port? source)
+    "<input-port>")
+   (else source)))
+
 (def (parser-e source parse-string parse-u8vector parse-port)
   (cond
    ((string? source) parse-string)
@@ -67,6 +79,8 @@
                 encoding: (encoding "UTF-8")
                 options: (options parse-xml-default-options)
                 namespaces: (ns []))
+  (unless (fixnum? options)
+    (raise-bad-argument 'parse-xml "fixnum for options" options))
   (let* ((parse (parser-e source xmlRead-string xmlRead-u8vector
                           xmlRead-port))
          (xtree (parse source url encoding options)))
@@ -74,7 +88,8 @@
       (unwind-protect
         (xml-doc->sxml xtree ns)
         (xmlFreeDoc xtree))
-      (raise-libxml-error 'parse-xml "Error parsing xml; no parse tree" source))))
+      (raise-libxml-error 'parse-xml "Error parsing xml; no parse tree"
+                          (source-description source)))))
 
 ;; html parser interface; parses to SXML + *CDATA*
 ;; source, encoding, url, options as above
@@ -84,6 +99,8 @@
                  encoding: (encoding "UTF-8")
                  options: (options parse-html-default-options)
                  filter: (filter-els []))
+  (unless (fixnum? options)
+    (raise-bad-argument 'parse-html "fixnum for options" options))
   (let* ((parse (parser-e source htmlRead-string htmlRead-u8vector
                           htmlRead-port))
          (xtree (parse source url encoding options)))
@@ -91,7 +108,8 @@
       (unwind-protect
         (html-doc->sxml xtree (node-filter-e filter-els))
         (xmlFreeDoc xtree))
-      (raise-libxml-error 'parse-html "Error parsing html; no parse tree" source))))
+      (raise-libxml-error 'parse-html "Error parsing html; no parse tree"
+                          (source-description source)))))
 
 (def (xml-doc->sxml xtree ns)
   (def nsmap
@@ -132,36 +150,54 @@
                        filter-e xmlNode-name-e xmlAttr-name-e)))
 
 (def (xmlNode->sxml node filter-e element-e attribute-e)
-  (let recur ((node node))
+  (def (process-siblings node)
+    (let lp ((node node) (racc []))
+      (if node
+        (let ((type (xmlNode-type node)))
+          (if (and (eq? type XML_ELEMENT_NODE) (filter-e node))
+            (lp (xmlNode-next node) racc)
+            (cond
+             ((eq? type XML_ELEMENT_NODE)
+              (let* ((el (element-e node))
+                     (attr (xmlNode-properties node))
+                     (children (process-siblings (xmlNode-children node))))
+                (lp (xmlNode-next node)
+                    (cons (if attr
+                            [el ['@ (xmlAttr->list attr attribute-e) ...] children ...]
+                            [el children ...])
+                          racc))))
+             ((eq? type XML_TEXT_NODE)
+              (lp (xmlNode-next node) (cons (xmlNode-content node) racc)))
+             ((eq? type XML_CDATA_SECTION_NODE)
+              (lp (xmlNode-next node) (cons ['*CDATA* (xmlNode-content node)] racc)))
+             ((eq? type XML_PI_NODE)
+              (lp (xmlNode-next node)
+                  (cons ['*PI* (string->symbol (xmlNode-name node))
+                               (or (xmlNode-content node) "")]
+                        racc)))
+             ((eq? type XML_ENTITY_REF_NODE)
+              (let ((children (process-siblings (xmlNode-children node))))
+                (let splice ((cs children) (racc racc))
+                  (if (pair? cs)
+                    (splice (cdr cs) (cons (car cs) racc))
+                    (lp (xmlNode-next node) racc)))))
+             (else ;; comments and unknown node types: skip
+              (lp (xmlNode-next node) racc)))))
+        (reverse racc))))
+  (process-siblings node))
+
+(def (xmlAttr-children-text node)
+  (let lp ((node node) (racc []))
     (if node
-      (if (filter-e node)
-        (recur (xmlNode-next node))
-        (let ((type (xmlNode-type node))
-              (rest (recur (xmlNode-next node))))
-          (cond
-           ((eq? type XML_ELEMENT_NODE)
-            (let ((el (element-e node))
-                  (attr (xmlNode-properties node))
-                  (children (recur (xmlNode-children node))))
-              (if attr
-                [[el ['@ (xmlAttr->list attr attribute-e) ...] children ...]
-                 rest ...]
-                [[el children ...] rest ...])))
-           ((eq? type XML_TEXT_NODE)
-            [(xmlNode-content node) rest ...])
-           ((eq? type XML_CDATA_SECTION_NODE)
-            [['*CDATA* (xmlNode-content node)] rest ...])
-           ((eq? type XML_COMMENT_NODE)
-            rest)
-           (else
-            (raise-libxml-error 'xmlNode->sxml "Unexpected node" (xmlNode-name node) type)))))
-      [])))
+      (let ((content (xmlNode-content node)))
+        (lp (xmlNode-next node)
+            (if content (cons content racc) racc)))
+      (reverse racc))))
 
 (def (xmlAttr->list attr attribute-e)
   (let recur ((attr attr))
     (if attr
-      (let* ((value (xmlAttr-children attr))
-             (value (if value [(xmlNode-content value)] [])))
+      (let ((value (xmlAttr-children-text (xmlAttr-children attr))))
         (cons [(attribute-e attr) value ...]
               (recur (xmlAttr-next attr))))
       [])))
